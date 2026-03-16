@@ -1,30 +1,24 @@
 const fs =  require("fs")
+// Lade die VM (Stelle sicher, dass hier execute_one und install_default_peripherals die Updates haben!)
 const js51 =  require("./51vm")
-
-
 
 let args = {
     input_file: "C:/Users/abb/Desktop/51cpu/temp/x11_ACALL_a11.hex",
     dump_file_template: "C:/Users/abb/Desktop/51cpu/temp/x11_ACALL_a11.simulate_hardware.dump.txt"
 }
-cmd_arg_list = process.argv.splice(2)
+let cmd_arg_list = process.argv.splice(2)
 if(cmd_arg_list.length > 0)
 {
     args.input_file = cmd_arg_list[0]
     args.dump_file_template = cmd_arg_list[1]
 }
 
-
-
-
 let run_flag = true
 let CPU_ERROR_ASSERT_FAILED = 0x11
 let assertion_info = null
 
-
 let vm = new js51.core51()
 js51.install_default_peripherals(vm)
-
 
 function dump_core(core) {
     let content = "";
@@ -36,9 +30,8 @@ function dump_core(core) {
     }
     content += '\n'
 
-    i = 0
+    let i = 0
     for (let x of ram_dump) {
-
         content += `${x} `
         i += 1
         if (i % 16 == 0) content += '\n'
@@ -47,17 +40,14 @@ function dump_core(core) {
     return content
 }
 
-
-
 function normal_stop(oldval, newval) {
     run_flag = false
     console.log("program exit.")
 }
 
-
 function assert_core(par0reg, par1reg, function_val) {
-    p0 = par0reg._value
-    p1 = par1reg._value
+    let p0 = par0reg._value
+    let p1 = par1reg._value
     if (function_val == 1){
             if (!(p0 > p1)) {
                 vm.error_info.code = CPU_ERROR_ASSERT_FAILED
@@ -67,7 +57,7 @@ function assert_core(par0reg, par1reg, function_val) {
             if (!(p0 == p1))
             {
                 vm.error_info.code = CPU_ERROR_ASSERT_FAILED
-                assertion_info = `${p0} == ${p1} assert faile`
+                assertion_info = `${p0} == ${p1} assert failed`
             }
         } else if (function_val == 3) {
             if (!(p0 < p1))
@@ -80,60 +70,14 @@ function assert_core(par0reg, par1reg, function_val) {
             assertion_info = `user actively requestd a crash.`
         }
 }
-/*
-ADDR_SIZE = 0x1D
-ADDR_PCL = 0x1E
-ADDR_PCH = 0x1F
-ADDR_CHUCK = 0x20
-ROM_LOCK = True
-SEQ_DISALBE_SDP =(
-    (0xAA, 0x5555),(0x55, 0x2AAA),(0x80, 0x5555),
-    (0xAA, 0x5555),(0x55, 0x2AAA),(0x20, 0x5555))
-SEQ_ENALBE_SDP = (
-    (0xAA, 0x5555),(0x55, 0x2AAA),(0xA0, 0x5555))
-def uf_programROM(core):
-    if int(core.PSW) & 2 == 0:
-        return
-    if int(core.A) ^ int(core.B) != 0xFF:
-        return
-        
-    # print(hex(vPC))
-    global ROM_LOCK
-    valA = int(core.A)
-    if valA == 0:
-        if ROM_LOCK:
-            return
-        size = int(core.IRAM[ADDR_SIZE])
-        PC = (int(core.IRAM[ADDR_PCH])<< 8) + int(core.IRAM[ADDR_PCL])
-        for i in range(len(core.ROM), PC + size):
-            core.ROM.append(0)
-        for i in range(size):
-            core.ROM[PC + i] = int(core.IRAM[ADDR_CHUCK + i])
-    elif valA == 1:
-        size = int(core.IRAM[ADDR_SIZE])
-        writing_seq = []
-        for i in range(size):
-            offset = i*3 + ADDR_SIZE + 1
-            data = int(core.IRAM[offset])
-            PC = (int(core.IRAM[offset + 2])<< 8) + int(core.IRAM[offset + 1])
-            writing_seq.append((data, PC))
-        
-        writing_seq = tuple(writing_seq)
-
-        if writing_seq == SEQ_DISALBE_SDP:
-            ROM_LOCK = False
-        elif writing_seq == SEQ_ENALBE_SDP:
-            ROM_LOCK = True
-*/
 
 function assert_and_dump_test(core) {
     let a = Math.floor(Math.random() * 0x100)
     let b = Math.floor(Math.random() * 0x100)
 
     let t = [
-        // assert 0XFF == 0XFF
-        0x75, 0xFD, a,  // 3     MOV 0xFD, #0x00])
-        0x75, 0xFE, b,  // 4     MOV 0xFE, #0x00
+        0x75, 0xFD, a,  // 3     MOV 0xFD, #a
+        0x75, 0xFE, b,  // 4     MOV 0xFE, #b
         0x75, 0xFF,     // 5     MOV 0xFF,  ?
     ]
 
@@ -141,38 +85,93 @@ function assert_and_dump_test(core) {
         [1, (a, b) => a > b],
         [2, (a, b) => a == b],
         [3, (a, b) => a < b],
-        [4, (a, b) => False]
+        [4, (a, b) => false]
     ]
     for (let cmpcode = 1; cmpcode < 4; ++cmpcode) {
         let c = [].concat(t)
         c.push(cmpcode)
 
         core.reset()
-        core.IDATA = (c)
+        core.IDATA = c
         core.next(3)
-        for (x of condition) {
-            let e = "assert function error."
+        for (let x of condition) {
             if (cmpcode == x[0])
             {
                 if (vm.error_info.code == js51.CPU_NO_ERROR) {
-                    if (!(x[1](a, b))) // assert failed but no exception
-                    {
+                    if (!(x[1](a, b))) {
                         console.error("assert failed but no exception ")
-                        reuturn -1;
+                        return -1;
                     }
-
                 } else {
-                    if (x[1](a, b))  // passed  but  exception happend
-                    {
+                    if (x[1](a, b)) {
                         console.error("passed but exception happend " + assertion_info)
-                        reuturn -1;
+                        return -1;
                     }
                 }
-
             }
         }
     }
     return 0;
+}
+
+// ==========================================
+// NEU: Test für die Timer-Hardware-Logik
+// ==========================================
+function test_timer_mode2(core) {
+    core.reset();
+    
+    // Kleines 8051 Programm in Maschinencode (Opcodes)
+    let test_prog = [
+        0x75, 0x89, 0x20, // MOV TMOD (0x89), #0x20  -> Timer 1, Mode 2
+        0x75, 0x8D, 0xFD, // MOV TH1  (0x8D), #0xFD  -> Reload-Wert auf FD
+        0x75, 0x8B, 0xFD, // MOV TL1  (0x8B), #0xFD  -> Start-Wert auf FD
+        0xD2, 0x8E,       // SETB TR1 (0x8E)         -> Starte Timer 1
+        0x00,             // NOP
+        0x00,             // NOP
+        0x00              // NOP
+    ];
+    
+    core.IDATA = test_prog.slice();
+    let rTCON = core["TCON"];
+    let rTL1 = core["TL1"];
+    
+    // Führe die ersten 4 Befehle aus (Setup + Timer Start)
+    core.next(4);
+    
+    // Nach dem 'SETB TR1' (Befehl 4) läuft der Timer im selben Zyklus an.
+    // Startwert war 0xFD, +1 Tick = 0xFE
+    if (!(rTCON.get() & 0x40)) {
+        console.error("Timer-Test: TR1 wurde nicht gesetzt!");
+        return -1;
+    }
+    if (rTL1.get() !== 0xFE) {
+        console.error(`Timer-Test: TL1 sollte 0xFE sein, ist aber 0x${rTL1.get().toString(16)}`);
+        return -1;
+    }
+
+    // Führe den ersten NOP aus
+    core.next(1);
+    // Timer tickt weiter -> 0xFF
+    if (rTL1.get() !== 0xFF) {
+        console.error(`Timer-Test: TL1 sollte 0xFF sein, ist aber 0x${rTL1.get().toString(16)}`);
+        return -1;
+    }
+
+    // Führe den zweiten NOP aus
+    core.next(1);
+    // Timer überläuft! 0xFF -> 0x00, aber Auto-Reload springt ein -> 0xFD
+    if (rTL1.get() !== 0xFD) {
+        console.error(`Timer-Test: Auto-Reload fehlgeschlagen! TL1 ist 0x${rTL1.get().toString(16)}`);
+        return -1;
+    }
+    
+    // Prüfe, ob das Overflow-Flag (TF1) gesetzt wurde (Bit 7 in TCON)
+    if (!(rTCON.get() & 0x80)) {
+        console.error("Timer-Test: Overflow-Flag (TF1) wurde nicht gesetzt!");
+        return -1;
+    }
+
+    return 0; // Test erfolgreich
 }
 
 let dump_content = ""
@@ -190,7 +189,6 @@ function install_my_sfr(core) {
 
     let obj = core.sfr_extend(my_sfr)
 
-
     let dump_core_to_template_file = function () {
         dump_content += dump_core(core)
     }
@@ -202,24 +200,36 @@ function install_my_sfr(core) {
 
 function main() {
     install_my_sfr(vm)
-    /*vm.reserved_instruction = uf_programROM*/
     
+    // Wenn keine Datei übergeben wurde -> Test-Modus
     if(args.input_file.length == 0)
     {
         let doc = `node 51sim.js <rom_file.hex> <dump_file>`
-        console.log(doc +'/n')
+        console.log(doc + '\n')
  
-        console.log("testing...")
+        console.log("Running Core Math Tests...")
         for (let i = 0; i < 1000; ++i)
         {
             if(assert_and_dump_test(vm) != 0)
             {
-                console.error("test failed!")
+                console.error("Math test failed!")
                 return;
             }
         }
-        console.error("test passed.")
+        console.log("Math tests passed.");
+
+        // NEU: Führe unseren Timer-Test aus
+        console.log("Running Timer Mode 2 Auto-Reload Test...");
+        if (test_timer_mode2(vm) === 0) {
+            console.log("Timer test passed! Hardware tick is working.");
+        } else {
+            console.error("Timer test failed.");
+            return;
+        }
+
+        console.log("All tests passed successfully.");
     }else{
+        // Normaler Ausführungsmodus
         let data = fs.readFileSync(args.input_file,'utf-8')
         data = js51.decode_ihex(data)
         vm.IDATA = data
@@ -234,7 +244,7 @@ function main() {
         {
             console.error(`${vPC.toString(16)} error with code ${vm.error_info.code} ${assertion_info}` );
         }
-      fs.writeFileSync(args.dump_file_template, dump_content)
+        fs.writeFileSync(args.dump_file_template, dump_content)
     }
 }
 

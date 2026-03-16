@@ -1,4 +1,3 @@
-
 _51cpu.prototype.execute_one = function () {
     let opcode = this.fetch_opcode() 
     if (opcode.test(0x01, 0x1F)) {
@@ -21,6 +20,14 @@ _51cpu.prototype.execute_one = function () {
         } else {
             this.__execute_decode_C0_FF(opcode)
         }
+    }
+
+    // =========================================================
+    // NEU: Hardware-Tick für Timer (und später UART)
+    // Lässt die Zeit vergehen, nachdem der Befehl ausgeführt wurde.
+    // =========================================================
+    if (this.hardware_tick) {
+        this.hardware_tick(1);
     }
 
     if (this.irq) {

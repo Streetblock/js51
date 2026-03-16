@@ -1,6 +1,4 @@
-
-    //--------interrupt service implement------
-
+//--------interrupt service implement------
 
 _51cpu.prototype.next = function (count = 1) {
     let len = 1
@@ -10,11 +8,8 @@ _51cpu.prototype.next = function (count = 1) {
             break
         if(this.addr_breakpoint.includes(this.PC.get()))
             break;
-        
     }   
-
 }
-
 
 _51cpu.prototype.coutinue = function () {
     while(true){
@@ -23,4 +18,3 @@ _51cpu.prototype.coutinue = function () {
             break;
     }
 }
-
