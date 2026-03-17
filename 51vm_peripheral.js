@@ -49,123 +49,133 @@ function install_default_peripherals(cpu){
     let rSCON = ret.get("SCON");
     let rIE   = ret.get("IE");
     let rIP   = ret.get("IP");
+    let rP3   = ret.get("P3"); // NEU: Port 3 referenzieren für die externen Pins
+
+    cpu.last_P3 = 0xFF; // Startzustand der Pins (meistens HIGH durch Pull-Ups)
 
     // =========================================================
-    // Hardware Tick für Timer (Mode 0, 1, 2 und 3)
+    // Hardware Tick: Timer, Counter, GATE und Externe Interrupts
     // =========================================================
     cpu.hardware_tick = function(cycles = 1) {
         let tcon_val = rTCON.get();
         let tmod_val = rTMOD.get();
+        let p3_val   = rP3.get();
+        let last_p3  = cpu.last_P3;
+        cpu.last_P3  = p3_val; // Zustand für den nächsten Tick merken
 
-        let tr0 = (tcon_val & 0x10) !== 0; // TCON.4 (TR0)
-        let tr1 = (tcon_val & 0x40) !== 0; // TCON.6 (TR1)
+        // --- 1. PIN-ZUSTÄNDE UND FLANKENERKENNUNG (High-to-Low) ---
+        let int0_pin = (p3_val & 0x04) !== 0; // P3.2
+        let int1_pin = (p3_val & 0x08) !== 0; // P3.3
+        let t0_pin   = (p3_val & 0x10) !== 0; // P3.4
+        let t1_pin   = (p3_val & 0x20) !== 0; // P3.5
 
-        let mode0 = tmod_val & 0x03;       // Timer 0 Modus
-        let mode1 = (tmod_val >> 4) & 0x03; // Timer 1 Modus
+        let int0_edge = ((last_p3 & 0x04) !== 0) && !int0_pin;
+        let int1_edge = ((last_p3 & 0x08) !== 0) && !int1_pin;
+        let t0_edge   = ((last_p3 & 0x10) !== 0) && !t0_pin;
+        let t1_edge   = ((last_p3 & 0x20) !== 0) && !t1_pin;
 
-        // --- TIMER 0 LOGIK ---
+        // --- 2. EXTERNE INTERRUPTS (INT0, INT1) AKTUALISIEREN ---
+        let it0 = (tcon_val & 0x01); // 1 = Flankengesteuert, 0 = Pegelgesteuert
+        let it1 = (tcon_val & 0x04);
+
+        if (it0) { if (int0_edge) tcon_val |= 0x02; } // Flanke: Setze IE0 Flag
+        else     { if (!int0_pin) tcon_val |= 0x02; else tcon_val &= ~0x02; } // Pegel: LOW setzt IE0, HIGH löscht es
+
+        if (it1) { if (int1_edge) tcon_val |= 0x08; } // Flanke: Setze IE1 Flag
+        else     { if (!int1_pin) tcon_val |= 0x08; else tcon_val &= ~0x08; }
+
+        rTCON.set(tcon_val); // Geänderte Interrupt-Flags ins Register schreiben
+        tcon_val = rTCON.get(); // Zur Sicherheit neu laden für die Timer-Logik
+
+        // --- 3. ZÄHLER-LOGIK (GATE, C/T, TR) BERECHNEN ---
+        let gate0 = (tmod_val & 0x08) !== 0;
+        let ct0   = (tmod_val & 0x04) !== 0;
+        let tr0   = (tcon_val & 0x10) !== 0;
+        
+        let gate1 = (tmod_val & 0x80) !== 0;
+        let ct1   = (tmod_val & 0x40) !== 0;
+        let tr1   = (tcon_val & 0x40) !== 0;
+
+        // Läuft Timer 0? (Start-Bit UND (Nicht-GATE ODER Pin ist High))
+        let timer0_run = tr0 && (!gate0 || int0_pin);
+        let timer1_run = tr1 && (!gate1 || int1_pin);
+
+        // Wie viel addieren wir? Bei C/T=1 zählen wir Flanken, sonst Maschinenzyklen
+        let timer0_cycles = timer0_run ? (ct0 ? (t0_edge ? 1 : 0) : cycles) : 0;
+        let timer1_cycles = timer1_run ? (ct1 ? (t1_edge ? 1 : 0) : cycles) : 0;
+
+        let mode0 = tmod_val & 0x03;
+        let mode1 = (tmod_val >> 4) & 0x03;
+
+        // --- 4. TIMER UPDATE (Mit berechneten Cycles) ---
+
+        // Timer 0
         if (mode0 === 3) {
-            // MODE 3: Split-Mode. TL0 und TH0 sind nun unabhängige 8-Bit-Timer.
-            if (tr0) { // TL0 wird von TR0 gesteuert
-                let timer0_l = rTL0.get() + cycles;
-                if (timer0_l > 0xFF) {
-                    rTCON.set(rTCON.get() | 0x20); // Setze TF0
-                }
-                rTL0.set(timer0_l & 0xFF);
-            }
-            if (tr1) { // TH0 KLAUT sich TR1 von Timer 1!
-                let timer0_h = rTH0.get() + cycles;
-                if (timer0_h > 0xFF) {
-                    rTCON.set(rTCON.get() | 0x80); // Setze TF1 (geklaut von Timer 1)
-                }
+            // MODE 3 Split: TL0 wird normal gesteuert
+            let timer0_l = rTL0.get() + timer0_cycles;
+            if (timer0_l > 0xFF) { rTCON.set(rTCON.get() | 0x20); }
+            rTL0.set(timer0_l & 0xFF);
+            
+            // TH0 klaut sich TR1 und läuft NUR als interner Timer
+            if (tr1) { 
+                let timer0_h = rTH0.get() + cycles; // Ignoriert T1-Pin und C/T1
+                if (timer0_h > 0xFF) { rTCON.set(rTCON.get() | 0x80); }
                 rTH0.set(timer0_h & 0xFF);
             }
-        } else if (tr0) {
-            // MODE 0, 1, 2 für Timer 0
+        } else if (timer0_cycles > 0) {
             if (mode0 === 0) { 
-                // Mode 0: 13-bit Timer (TL0 nutzt nur 5 Bit, TH0 nutzt 8 Bit)
-                let timer0_val = (rTH0.get() << 5) | (rTL0.get() & 0x1F);
-                timer0_val += cycles;
-                if (timer0_val > 0x1FFF) {
-                    timer0_val &= 0x1FFF;
-                    rTCON.set(rTCON.get() | 0x20); // Setze TF0
-                }
-                // Obere 3 Bit von TL0 bleiben erhalten, untere 5 Bit überschreiben
-                rTL0.set((rTL0.get() & 0xE0) | (timer0_val & 0x1F));
-                rTH0.set((timer0_val >> 5) & 0xFF);
-
+                let t_val = (rTH0.get() << 5) | (rTL0.get() & 0x1F);
+                t_val += timer0_cycles;
+                if (t_val > 0x1FFF) { t_val &= 0x1FFF; rTCON.set(rTCON.get() | 0x20); }
+                rTL0.set((rTL0.get() & 0xE0) | (t_val & 0x1F));
+                rTH0.set((t_val >> 5) & 0xFF);
             } else if (mode0 === 1) { 
-                // Mode 1: 16-bit Timer
-                let timer0_val = (rTH0.get() << 8) | rTL0.get();
-                timer0_val += cycles;
-                if (timer0_val > 0xFFFF) {
-                    timer0_val &= 0xFFFF;
-                    rTCON.set(rTCON.get() | 0x20); // Setze TF0
-                }
-                rTL0.set(timer0_val & 0xFF);
-                rTH0.set((timer0_val >> 8) & 0xFF);
-
+                let t_val = (rTH0.get() << 8) | rTL0.get();
+                t_val += timer0_cycles;
+                if (t_val > 0xFFFF) { t_val &= 0xFFFF; rTCON.set(rTCON.get() | 0x20); }
+                rTL0.set(t_val & 0xFF);
+                rTH0.set((t_val >> 8) & 0xFF);
             } else if (mode0 === 2) { 
-                // Mode 2: 8-bit Auto-Reload
-                let timer0_val = rTL0.get() + cycles;
-                if (timer0_val > 0xFF) {
-                    timer0_val = rTH0.get() + (timer0_val - 0x100); 
-                    rTCON.set(rTCON.get() | 0x20); // Setze TF0
+                let t_val = rTL0.get() + timer0_cycles;
+                if (t_val > 0xFF) {
+                    t_val = rTH0.get() + (t_val - 0x100); 
+                    rTCON.set(rTCON.get() | 0x20); 
                 }
-                rTL0.set(timer0_val & 0xFF);
+                rTL0.set(t_val & 0xFF);
             }
         }
 
-        // --- TIMER 1 LOGIK ---
-        // Timer 1 läuft nicht, wenn er selbst in Mode 3 ist.
-        if (mode1 !== 3) {
-            // Wenn Timer 0 in Mode 3 ist, wird TR1 für TH0 benutzt. 
-            // Timer 1 läuft dann permanent durch (als Baudraten-Generator).
-            let t1_running = (mode0 === 3) ? true : tr1;
-            
-            if (t1_running) {
-                if (mode1 === 0) { 
-                    // Mode 0: 13-bit Timer
-                    let timer1_val = (rTH1.get() << 5) | (rTL1.get() & 0x1F);
-                    timer1_val += cycles;
-                    if (timer1_val > 0x1FFF) {
-                        timer1_val &= 0x1FFF;
-                        if (mode0 !== 3) rTCON.set(rTCON.get() | 0x80); // Nur TF1 setzen, wenn Timer 0 es nicht klaut
-                    }
-                    rTL1.set((rTL1.get() & 0xE0) | (timer1_val & 0x1F));
-                    rTH1.set((timer1_val >> 5) & 0xFF);
-
-                } else if (mode1 === 1) { 
-                    // Mode 1: 16-bit Timer
-                    let timer1_val = (rTH1.get() << 8) | rTL1.get();
-                    timer1_val += cycles;
-                    if (timer1_val > 0xFFFF) {
-                        timer1_val &= 0xFFFF;
-                        if (mode0 !== 3) rTCON.set(rTCON.get() | 0x80);
-                    }
-                    rTL1.set(timer1_val & 0xFF);
-                    rTH1.set((timer1_val >> 8) & 0xFF);
-
-                } else if (mode1 === 2) { 
-                    // Mode 2: 8-bit Auto-Reload (Typisch für Baudrate)
-                    let timer1_val = rTL1.get() + cycles;
-                    if (timer1_val > 0xFF) {
-                        timer1_val = rTH1.get() + (timer1_val - 0x100); 
-                        if (mode0 !== 3) rTCON.set(rTCON.get() | 0x80);
-                    }
-                    rTL1.set(timer1_val & 0xFF);
+        // Timer 1 (Läuft nicht, wenn Timer 0 in Mode 3 ist und TR1 geklaut hat, oder wenn er selbst Mode 3 ist)
+        if (mode1 !== 3 && mode0 !== 3 && timer1_cycles > 0) {
+            if (mode1 === 0) { 
+                let t_val = (rTH1.get() << 5) | (rTL1.get() & 0x1F);
+                t_val += timer1_cycles;
+                if (t_val > 0x1FFF) { t_val &= 0x1FFF; rTCON.set(rTCON.get() | 0x80); }
+                rTL1.set((rTL1.get() & 0xE0) | (t_val & 0x1F));
+                rTH1.set((t_val >> 5) & 0xFF);
+            } else if (mode1 === 1) { 
+                let t_val = (rTH1.get() << 8) | rTL1.get();
+                t_val += timer1_cycles;
+                if (t_val > 0xFFFF) { t_val &= 0xFFFF; rTCON.set(rTCON.get() | 0x80); }
+                rTL1.set(t_val & 0xFF);
+                rTH1.set((t_val >> 8) & 0xFF);
+            } else if (mode1 === 2) { 
+                let t_val = rTL1.get() + timer1_cycles;
+                if (t_val > 0xFF) {
+                    t_val = rTH1.get() + (t_val - 0x100); 
+                    rTCON.set(rTCON.get() | 0x80); 
                 }
+                rTL1.set(t_val & 0xFF);
             }
         }
     }
     
     // =========================================================
-    // Interrupt Service Routine Logic
+    // Interrupt Service Routine Logic (Bleibt unverändert)
     // =========================================================
     let default_irq = function(){
         let vIE = rIE.get();
-        if(!(vIE & 0x80))
-            return -1;
+        if(!(vIE & 0x80)) return -1;
 
         let vTCON = rTCON.get();
         let vSCON = rSCON.get();
@@ -180,28 +190,22 @@ function install_default_peripherals(cpu){
         let IRQMASK = (1 << MAXIRQN) - 1;
 
         let vIRQEM = IRQMASK & IRQ & vIE;        
-        if (vIRQEM === 0)
-            return -1;
+        if (vIRQEM === 0) return -1;
 
         let vIPM = IRQMASK & rIP.get(); 
 
         let sel = (vIRQEM << MAXIRQN) | (vIRQEM & vIPM);
         let IRQN = 0;
         for(; IRQN < 2*MAXIRQN; ++IRQN){
-            if (sel & (1 << IRQN))
-                break;
+            if (sel & (1 << IRQN)) break;
         }
         IRQN %= MAXIRQN;
 
-        if(IRQN === 0){
-            rTCON.set(rTCON.get() & 0xFD);
-        }else if(IRQN === 1){
-            rTCON.set(rTCON.get() & 0xDF);
-        }else if(IRQN === 2){
-            rTCON.set(rTCON.get() & 0xF7);
-        }else if(IRQN === 3){
-            rTCON.set(rTCON.get() & 0x7F);
-        }
+        if(IRQN === 0) rTCON.set(rTCON.get() & 0xFD);
+        else if(IRQN === 1) rTCON.set(rTCON.get() & 0xDF);
+        else if(IRQN === 2) rTCON.set(rTCON.get() & 0xF7);
+        else if(IRQN === 3) rTCON.set(rTCON.get() & 0x7F);
+        
         return IRQN;
     }
     
