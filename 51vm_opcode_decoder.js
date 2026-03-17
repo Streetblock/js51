@@ -1,5 +1,33 @@
+// =========================================================
+// NEU: Lookup-Tabelle für Zyklengenauigkeit
+// Jeder der 256 Opcodes hat hier seine exakte Dauer
+// in 8051-Maschinenzyklen (1, 2 oder 4) hinterlegt.
+// =========================================================
+const OPCODE_CYCLES = [
+    1, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0x00 - 0x0F
+    2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0x10 - 0x1F
+    2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0x20 - 0x2F
+    2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0x30 - 0x3F
+    2, 2, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0x40 - 0x4F
+    2, 2, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0x50 - 0x5F
+    2, 2, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0x60 - 0x6F
+    2, 2, 2, 2, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0x70 - 0x7F
+    2, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, // 0x80 - 0x8F (0x84 = DIV AB = 4)
+    2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0x90 - 0x9F
+    2, 2, 1, 2, 4, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, // 0xA0 - 0xAF (0xA4 = MUL AB = 4)
+    2, 2, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, // 0xB0 - 0xBF
+    2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0xC0 - 0xCF
+    2, 2, 1, 1, 1, 2, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, // 0xD0 - 0xDF
+    2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0xE0 - 0xEF
+    2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1  // 0xF0 - 0xFF
+];
+
 _51cpu.prototype.execute_one = function () {
     let opcode = this.fetch_opcode() 
+    
+    // Zyklendauer für den geholten Opcode ermitteln (Fallback auf 1, falls was schiefgeht)
+    let cycles = OPCODE_CYCLES[opcode.value] || 1;
+
     if (opcode.test(0x01, 0x1F)) {
         //AJMP addr11
         this.PC.set(opcode.fetch_addr11())
@@ -23,11 +51,10 @@ _51cpu.prototype.execute_one = function () {
     }
 
     // =========================================================
-    // NEU: Hardware-Tick für Timer (und später UART)
-    // Lässt die Zeit vergehen, nachdem der Befehl ausgeführt wurde.
+    // Hardware-Tick mit der ECHTEN Zyklendauer aufrufen
     // =========================================================
     if (this.hardware_tick) {
-        this.hardware_tick(1);
+        this.hardware_tick(cycles);
     }
 
     if (this.irq) {
@@ -543,11 +570,6 @@ _51cpu.prototype.__execute_decode_D0_DF = function (opcode) {
         // DJNZ direct,offset
         let direct = this.fetch_direct()
         let offset = this.fetch_const()
-        //consider PSW = 0x02  and ACC = 0
-        // when excute PSW dec step,
-        // we consider PSW = 0x02 - 1 = 0x01
-        // but ACC parity flag make PSW = 0x00
-        // but! the standard CPU still using result 0x01 to make judgement
         let value = this.op_dec(direct)
         if (value != 0)
             this.op_add_offset(offset)
