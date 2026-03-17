@@ -49,7 +49,28 @@ function install_default_peripherals(cpu){
     let rSCON = ret.get("SCON");
     let rIE   = ret.get("IE");
     let rIP   = ret.get("IP");
-    let rP3   = ret.get("P3"); // NEU: Port 3 referenzieren für die externen Pins
+    let rP3   = ret.get("P3"); // Port 3 referenzieren für die externen Pins
+
+    let rSBUF = ret.get("SBUF"); // SBUF Referenz holen
+
+    // Callback-Funktion, die vom GUI überschrieben werden kann
+    cpu.on_serial_tx = null; 
+    // Zähler für eine realistische Sende-Verzögerung
+    cpu.serial_tx_delay = 0; 
+
+    // Wir klinken uns in jeden Schreibzugriff auf SBUF ein
+    rSBUF.setlistener.push((oldval, newval) => {
+        // 1. Daten an das Frontend schicken (z.B. für ein Terminal)
+        if (typeof cpu.on_serial_tx === 'function') {
+            cpu.on_serial_tx(newval);
+        }
+
+        // 2. Hardware-Verhalten simulieren
+        // Echte Hardware braucht Zeit zum Senden (Baudrate). 
+        // Wir simulieren eine kleine Verzögerung, bevor wir TI setzen, 
+        // damit klassische Polling-Schleifen wie "while(!TI);" korrekt arbeiten.
+        cpu.serial_tx_delay = 12; // Zyklen-Verzögerung (anpassbar)
+    });
 
     cpu.last_P3 = 0xFF; // Startzustand der Pins (meistens HIGH durch Pull-Ups)
 
@@ -166,6 +187,21 @@ function install_default_peripherals(cpu){
                     rTCON.set(rTCON.get() | 0x80); 
                 }
                 rTL1.set(t_val & 0xFF);
+            }
+        }
+
+        // --- 5. Serielle Schnittstelle (UART TX Simulation) ---
+        if (cpu.serial_tx_delay > 0) {
+            cpu.serial_tx_delay -= cycles; // Ziehe die aktuellen Maschinenzyklen ab
+            if (cpu.serial_tx_delay <= 0) {
+                cpu.serial_tx_delay = 0;
+                
+                // Setze das TI-Flag (Transmit Interrupt, Bit 1 in SCON)
+                let scon_val = rSCON.get();
+                // Nur setzen, wenn es nicht eh schon 1 ist
+                if ((scon_val & 0x02) === 0) {
+                    rSCON.set(scon_val | 0x02); // 0x02 entspricht SCON.1
+                }
             }
         }
     }
