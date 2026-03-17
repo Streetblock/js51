@@ -49,7 +49,56 @@ function install_default_peripherals(cpu){
     let rSCON = ret.get("SCON");
     let rIE   = ret.get("IE");
     let rIP   = ret.get("IP");
+    let rP0   = ret.get("P0");
+    let rP1   = ret.get("P1");
+    let rP2   = ret.get("P2");
     let rP3   = ret.get("P3"); // Port 3 referenzieren für die externen Pins
+
+    // Array aller Ports für eine bequeme Schleife
+    let io_ports = [rP0, rP1, rP2, rP3];
+
+    for (let p of io_ports) {
+        if (!p) continue; // Sicherheitscheck, falls ein Port fehlt
+
+        // 1. Interner Speicher für das Latch (Was die CPU geschrieben hat)
+        // Nach einem Reset sind alle 8051-Ports auf High (0xFF)
+        p._latch = 0xFF; 
+
+        // 2. Zustand der externen Hardware (Was von außen anliegt)
+        // 1 = unverbunden/High-Z (wird vom Latch dominiert), 0 = hart auf GND gezogen.
+        p.ext_pins = 0xFF; 
+
+        // 3. Überschreibe den Schreibzugriff (CPU schreibt ins Register)
+        p.set = function (val) {
+            // Speichere den Wert im Latch
+            this._latch = val & 0xFF;
+            
+            // Der resultierende Zustand der Pins ist Latch AND Externe Hardware
+            let real_pins = this._latch & this.ext_pins; 
+            
+            // Rufe die Standard-set-Funktion auf, damit Listener getriggert werden
+            return this.__proto__.set.call(this, real_pins);
+        };
+
+        // 4. Überschreibe den Lesezugriff (CPU liest den Pin-Zustand)
+        p.get = function () {
+            // Aktualisiere den Wert vor dem Lesen (Latch AND Extern)
+            this._value = this._latch & this.ext_pins;
+            
+            // Rufe die Standard-get-Funktion auf
+            return this.__proto__.get.call(this);
+        };
+
+        // 5. Neue Funktion für das GUI (Simulation von externer Hardware)
+        p.set_ext_pins = function(val) {
+            this.ext_pins = val & 0xFF;
+            // Aktualisiere sofort den internen _value, damit die CPU es im nächsten Zyklus sieht
+            this._value = this._latch & this.ext_pins;
+        };
+        
+        // Initialisiere die Standard-Werte für die Standard-get/set-Logik
+        p.set(0xFF);
+    }
 
     let rSBUF = ret.get("SBUF"); // SBUF Referenz holen
 
