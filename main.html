@@ -8,46 +8,63 @@
     <script src="51vm_opcode_decoder.js"></script>
     <script src="51vm_ctl.js"></script>
     <script src="51vm_peripheral.js"></script>
-
-    <script src="test.js"></script>
-
     <script src="hex_decoder.js"></script>
-    <script>
 
+    <script>
         let vm = new _51cpu(0x100, 0x10000)
         let value_type = ["HEX", "DEC", "BIN"]
-        let running = 1
+        let running = 0 // Initial auf 0, damit 'Start' angezeigt wird
+        let currentLang = 'en'; // Standardsprache
+
+        // Übersetzungs-Wörterbuch
+        const translations = {
+            en: { start: "Start", pause: "Pause", continue: "Continue", reset: "Reset", clear: "Clear", terminal: "Virtual Terminal:", ram: "RAM", int0: "Int 0", int1: "Int 1" },
+            de: { start: "Start", pause: "Pause", continue: "Weiter", reset: "Zurücksetzen", clear: "Löschen", terminal: "Virtuelles Terminal:", ram: "RAM", int0: "Int 0", int1: "Int 1" },
+            cn: { start: "开始", pause: "暂停", continue: "继续", reset: "重置", clear: "清空", terminal: "虚拟终端:", ram: "内存", int0: "int0", int1: "int1" }
+        };
+
+        function setLanguage(lang) {
+            currentLang = lang;
+            // Statische Texte im UI aktualisieren
+            document.getElementById("ram-title").innerText = translations[lang].ram;
+            document.getElementById("btn-reset").innerText = translations[lang].reset;
+            document.getElementById("btn-clear-terminal").innerText = translations[lang].clear;
+            document.getElementById("terminal-label").innerText = translations[lang].terminal;
+            document.getElementById("btn-int0").innerText = translations[lang].int0;
+            document.getElementById("btn-int1").innerText = translations[lang].int1;
+
+            // Den Zustand des Start-Buttons sprachlich anpassen
+            updateStartButtonText();
+        }
+
+        function updateStartButtonText() {
+            const btn = document.getElementById("btn-start");
+            if (running) {
+                btn.innerText = translations[currentLang].pause;
+            } else if (vm.PC.get() === 0 && vm.error_info.code === CPU_NO_ERROR) {
+                btn.innerText = translations[currentLang].start;
+            } else {
+                btn.innerText = translations[currentLang].continue;
+            }
+        }
 
         function excute_tick() {
-            if(running)
-            {
-                for(let i = 0; i < 2000; ++i){
-                    if(vm.error_info.code == CPU_NO_ERROR)
-                    {
+            if(running) {
+                for(let i = 0; i < 2000; ++i) {
+                    if(vm.error_info.code == CPU_NO_ERROR) {
                         vm.next(1)
                     }
                 }
             }
 
             let message = ""
-            if(vm.error_info.code != CPU_NO_ERROR)
-            {
+            if(vm.error_info.code != CPU_NO_ERROR) {
                 switch (vm.error_info.code) {
-                case CPU_NO_ERROR:
-                    break
-                case  CPU_ERROR_INVALID_IRAM_ADDRESS:
-                    message = "access invalid IRAM address at 0x" + vm.error_info.addr.toString(16)
-                    break
-                case  CPU_ERROR_INVALID_ROM_ADDRESS:
-                    message = "access invalid ROM address at 0x" + vm.error_info.addr.toString(16)
-                    break
-                case  CPU_ERROR_INVALID_SFR_ADDRESS:
-                    message = "access invalid SFR address at 0x" + vm.error_info.addr.toString(16)
-                    break
-                case  CPU_ERROR_INVALID_XRAM_ADDRESS:
-                    message = "access invalid XRAM address at 0x" + vm.error_info.addr.toString(16)
-                    break
-               }
+                    case CPU_ERROR_INVALID_IRAM_ADDRESS: message = "Invalid IRAM: 0x" + vm.error_info.addr.toString(16); break;
+                    case CPU_ERROR_INVALID_ROM_ADDRESS: message = "Invalid ROM: 0x" + vm.error_info.addr.toString(16); break;
+                    case CPU_ERROR_INVALID_SFR_ADDRESS: message = "Invalid SFR: 0x" + vm.error_info.addr.toString(16); break;
+                    case CPU_ERROR_INVALID_XRAM_ADDRESS: message = "Invalid XRAM: 0x" + vm.error_info.addr.toString(16); break;
+                }
             }
             document.getElementById("error-info").innerText = message
         }
@@ -55,438 +72,195 @@
         setInterval(excute_tick, 1)
 
         function start_or_pause() {
-            // 0 meaning paused of stopped in
             if (running) {
-                running = 0
-                document.getElementById("btn-start").innerText = "继续"
-            } else if( vm.error_info.code == CPU_NO_ERROR) {
-                running = 1
-                document.getElementById("btn-start").innerText = "暂停"
+                running = 0;
+            } else if(vm.error_info.code == CPU_NO_ERROR) {
+                running = 1;
             }
+            updateStartButtonText();
         }
 
         function reset() {
-            vm.reset()
-            running = 0
-            document.getElementById("btn-start").innerText = "开始"
-            document.getElementById("error-info").innerText = ""
+            vm.reset();
+            running = 0;
+            updateStartButtonText();
+            document.getElementById("error-info").innerText = "";
         }
 
-
         function clear_terminal() {
-            let terimal = document.getElementById("terminal-content")
-            terimal.innerText = ''
+            document.getElementById("terminal-content").innerText = ''
         }
 
         function set_ext_interrupt(n) {
-            if (n === 0)
-                vm.TCON.set(vm.TCON.get() | 2)
-            else if (n === 1)
-                vm.TCON.set(vm.TCON.get() | 8)
+            if (n === 0) vm.TCON.set(vm.TCON.get() | 2)
+            else if (n === 1) vm.TCON.set(vm.TCON.get() | 8)
         }
+
         function change_type() {
-            if (this.value == null) {
-                this.value = 0
-            }
-            else {
-                this.value = (this.value + 1) % (value_type.length)
-            }
-            this.innerHTML = value_type[this.value]
+            this.value = (this.value === undefined ? 0 : (this.value + 1) % value_type.length);
+            this.innerHTML = value_type[this.value];
         }
 
         function set_dom_value(dom, value, type, len_bit = 8) {
-            dom.value = value
-            let max = Math.pow(2, len_bit) - 1
-            let dec_len = max.toString(10).length
-            let hex_len = max.toString(16).length
-            let bin_len = max.toString(2).length
-            let base = 10;
-            let group = 4
-            let len = dec_len;
-
-            switch (type) {
-                case 0:
-                    base = 16
-                    len = hex_len
-                    group = 2
-                    break
-                case 1:
-                    base = 10
-                    len = dec_len
-                    group = 4
-                    break
-                case 2:
-                    base = 2
-                    len = bin_len
-                    group = 8
-                    break
-            }
-            let str = value.toString(base).toUpperCase()
-            while (str.length < len)
-                str = "0" + str
-
-            let disp = ""
-            for (let i = 0; i < str.length; ++i) {
-                if (i % group == 0 && i != 0)
-                    disp = ' ' + disp
-                disp = str[str.length - 1 - i] + disp
-
-            }
-            dom.innerHTML = disp
+            dom.value = value;
+            let base = type === 0 ? 16 : (type === 1 ? 10 : 2);
+            let str = value.toString(base).toUpperCase();
+            let pad = Math.pow(2, len_bit) - 1;
+            let targetLen = pad.toString(base).length;
+            while (str.length < targetLen) str = "0" + str;
+            dom.innerHTML = str;
         }
 
         function combine_dom_reg(dom_id, reg, reg_bit_len = 8) {
-            let dom_value = document.querySelector(dom_id + " .value")
-            let dom_type = document.querySelector(dom_id + " .title .type")
-            dom_type.value = 0
-            dom_value.value = reg.get()
-
+            let dom_value = document.querySelector(dom_id + " .value");
+            let dom_type = document.querySelector(dom_id + " .title .type");
+            dom_type.value = 0;
             dom_type.onclick = function () {
-                change_type.apply(this)
-                set_dom_value(dom_value, reg.get(), dom_type.value, reg_bit_len)
+                change_type.apply(this);
+                set_dom_value(dom_value, reg.get(), dom_type.value, reg_bit_len);
             }
             return function () {
-                if (dom_value.value != reg.get())
-                    set_dom_value(dom_value, reg.get(), dom_type.value, reg_bit_len)
+                set_dom_value(dom_value, reg.get(), dom_type.value, reg_bit_len);
             }
         }
-
 
         function initReg() {
-            createRAMcell()
-            install_default_peripherals(vm)
+            createRAMcell();
+            install_default_peripherals(vm);
 
-            let lookingCallback = []
-            lookingCallback.push(combine_dom_reg("#reg-a", vm.A))
-            lookingCallback.push(combine_dom_reg("#reg-b", vm.B))
-            lookingCallback.push(combine_dom_reg("#reg-sp", vm.SP))
-            lookingCallback.push(combine_dom_reg("#reg-psw", vm.PSW))
-            lookingCallback.push(combine_dom_reg("#reg-dptr", vm.DPTR, 16))
-            lookingCallback.push(combine_dom_reg("#reg-pc", vm.PC, 16))
-
-            lookingCallback.push(combine_dom_reg("#reg-p0", vm.P0))
-            lookingCallback.push(combine_dom_reg("#reg-p1", vm.P1))
-            lookingCallback.push(combine_dom_reg("#reg-p2", vm.P2))
-            lookingCallback.push(combine_dom_reg("#reg-p3", vm.P3))
+            let lookingCallback = [
+                combine_dom_reg("#reg-a", vm.A),
+                combine_dom_reg("#reg-b", vm.B),
+                combine_dom_reg("#reg-sp", vm.SP),
+                combine_dom_reg("#reg-psw", vm.PSW),
+                combine_dom_reg("#reg-dptr", vm.DPTR, 16),
+                combine_dom_reg("#reg-pc", vm.PC, 16),
+                combine_dom_reg("#reg-p0", vm.P0),
+                combine_dom_reg("#reg-p1", vm.P1),
+                combine_dom_reg("#reg-p2", vm.P2),
+                combine_dom_reg("#reg-p3", vm.P3)
+            ];
 
             let cells = document.querySelectorAll("#ram .row .cell");
-            for (let one of cells) {
-                one.value = 0
-            }
             let lookingRAM = function () {
-                if (vm.IRAM.length != cells.length) {
-                    throw "IRAM wroing length!"
-                }
                 for (let i = 0; i < vm.IRAM.length; ++i) {
                     if (cells[i].value != vm.IRAM[i]) {
-                        set_dom_value(cells[i], vm.IRAM[i], 0, 8)
-                        cells[i].classList.add("changed")
+                        set_dom_value(cells[i], vm.IRAM[i], 0, 8);
+                        cells[i].classList.add("changed");
                     }
                 }
-                for (let c of lookingCallback) {
-                    c()
-                }
-                window.requestAnimationFrame(lookingRAM)
+                for (let c of lookingCallback) c();
+                window.requestAnimationFrame(lookingRAM);
             }
-            window.requestAnimationFrame(lookingRAM)
+            window.requestAnimationFrame(lookingRAM);
 
-            let virtual_terminal = document.getElementById("terminal-content")
             vm.SBUF.setlistener.push(function (old_value, new_value) {
-                virtual_terminal.innerHTML += String.fromCharCode(new_value)
-                let scon = vm.SCON.get()
-                scon |= 0x02
-                vm.SCON.set(scon)
-            })
+                document.getElementById("terminal-content").innerHTML += String.fromCharCode(new_value);
+            });
             
-            reset()
+            setLanguage('en'); // Setzt Englisch als Standard beim Start
+            reset();
         }
+
         function createRAMcell() {
             let ram = document.querySelector("#ram")
-            let n_row = vm.IRAM.length / 16;
-
-            for (let i = 0; i < n_row; ++i) {
+            for (let i = 0; i < vm.IRAM.length / 16; ++i) {
                 for (let k = 0; k < 2; ++k) {
-
-                    let row = document.createElement("span")
-                    row.classList.add("row")
+                    let row = document.createElement("span");
+                    row.classList.add("row");
                     if(k == 0) row.innerHTML = "0x" + i.toString(16) +"0:";
                     for (let j = 0; j < 8; ++j) {
-                        let cell = document.createElement("span")
-                        cell.classList.add("cell")
-                        cell.innerText = "00"
-                        row.appendChild(cell)
+                        let cell = document.createElement("span");
+                        cell.classList.add("cell");
+                        row.appendChild(cell);
                     }
-
-                    ram.appendChild(row)
+                    ram.appendChild(row);
                 }
-                let split = document.createElement("span")
-                split.style.flexBasis = '100%'
-                ram.appendChild(split)
+                let split = document.createElement("span");
+                split.style.flexBasis = '100%';
+                ram.appendChild(split);
             }
         }
-
 
         function readfile() {
-            let file = null
-            if (this.files.length > 0)
-                file = this.files[0];
-            else
-                return
-            //---------------!-----------------
-            reset()
-
-            let SuffixStartPos = file.name.lastIndexOf('.')
-            let fileSuffix = file.name.substring(SuffixStartPos)
-
-
-            if (fileSuffix == ".bin") {
-                let reader = new FileReader();
-                //将文件以二进制形式读入页面 
+            let file = this.files[0];
+            if (!file) return;
+            reset();
+            let Suffix = file.name.substring(file.name.lastIndexOf('.'));
+            let reader = new FileReader();
+            if (Suffix == ".bin") {
                 reader.readAsArrayBuffer(file);
-                reader.onloadend = function (f) {
-                    vm.IDATA = new Uint8Array(reader.result)
-                }
-            } else if (fileSuffix == ".hex") {
-                let reader = new FileReader()
-                reader.readAsText(file)
-                reader.onloadend = function () {
-                    vm.IDATA = decode_ihex(reader.result);
-                }
+                reader.onloadend = () => vm.IDATA = new Uint8Array(reader.result);
+            } else if (Suffix == ".hex") {
+                reader.readAsText(file);
+                reader.onloadend = () => vm.IDATA = decode_ihex(reader.result);
             }
         }
-
-
-
     </script>
+
     <style>
-        body {
-            display: flex;
-            justify-content: space-around;
-            align-items: center;
-            flex-wrap: wrap;
-        }
-
-        #reg-a {}
-
-        .reg {
-            border-radius: .5em;
-            border: 1px solid rgb(150, 150, 119);
-            box-shadow: .15em .15em .25em rgba(0.3, 0.3, 0.3, 0.3);
-            display: inline-flex;
-            flex-direction: column;
-            width: 6em;
-        }
-
-        .reg.reg16 {
-            width: 12em;
-        }
-
-        .reg .value {
-            padding: .3em .4em;
-
-            box-shadow: .15em .2em .2em rgba(0.3, 0.3, 0.3, 0.1) inset;
-
-            width: 100%;
-            text-align: center;
-            box-sizing: border-box;
-        }
-
-        .reg .title {
-            width: 100%;
-            display: inline-flex;
-            text-align: center;
-
-        }
-
-        .reg .title .name {
-            width: 50%;
-            padding: .3em .4em;
-        }
-
-        .reg .title .type {
-            padding: .3em .4em;
-            border-top-right-radius: .5em;
-            background: cornflowerblue;
-            color: cornsilk;
-
-            width: 50%;
-            transition-duration: .15s
-        }
-
-        .reg .title .type:hover {
-            cursor: pointer;
-            transform: scale(1.1)
-        }
-
-        .reg .title .type:active {
-            cursor: pointer;
-            transform: scale(1)
-        }
-
-        #ram {
-            display: inline-flex;
-            align-items: center;
-            flex-wrap: wrap;
-            border: 1px solid grey;
-            border-radius: .5em;
-            box-shadow: .15em .15em .25em rgba(0.3, 0.3, 0.3, 0.3);
-            justify-content: space-around;
-            width: 35em;
-        }
-
-        #ram .row {
-            margin: 0.2em .2em
-        }
-
-        #ram .row .cell {
-            transition-duration: .2s;
-            padding: 0em .2em;
-            width: 2em;
-        }
-
-        #ram .row .cell:hover {
-            box-shadow: .15em .2em .2em rgba(0.3, 0.3, 0.3, 0.1) inset;
-            border-radius: .5em;
-        }
-
-        #ram .row .cell.changed {
-            background: gray;
-            border-radius: .5em;
-            padding: 0 .2em;
-            color: white;
-            box-shadow: 0.1em 0.1em 0.2em #483d8b6b;
-        }
-
-        #ram .title {
-            border-radius: .5em;
-            border-bottom-right-radius: 0;
-            border-bottom-left-radius: 0;
-            background: cornflowerblue;
-            box-shadow: .15em .2em .2em rgba(0.3, 0.3, 0.3, 0.1);
-            color: cornsilk;
-            flex-basis: 100%;
-            padding: .3em .4em;
-            text-align: center;
-        }
-
-        #virtual-terminal {
-            border-radius: .5em;
-
-            border: 1px solid grey;
-            box-shadow: .15em .2em .2em rgba(0.3, 0.3, 0.3, 0.1);
-            width: 100%;
-            white-space: pre
-        }
-
-        #terminal-content {
-            width: 100%;
-            overflow: scroll;
-            white-space: pre;
-        }
-
-        #error-info {
-            color: read;
-            size:   2em;
-        }
+        /* CSS bleibt weitgehend gleich */
+        body { display: flex; justify-content: space-around; align-items: center; flex-wrap: wrap; font-family: sans-serif; }
+        .reg { border-radius: .5em; border: 1px solid #969677; box-shadow: .15em .15em .25em rgba(0,0,0,0.1); display: inline-flex; flex-direction: column; width: 6em; margin: 2px; }
+        .reg16 { width: 12em; }
+        .reg .value { padding: .3em; width: 100%; text-align: center; box-sizing: border-box; background: #f9f9f9; }
+        .reg .title { width: 100%; display: inline-flex; text-align: center; background: #eee; }
+        .reg .title .name { width: 50%; padding: .3em; }
+        .reg .title .type { padding: .3em; border-top-right-radius: .5em; background: cornflowerblue; color: white; width: 50%; cursor: pointer; }
+        #ram { display: inline-flex; flex-wrap: wrap; border: 1px solid grey; border-radius: .5em; width: 35em; padding: 10px; }
+        #ram .row .cell { width: 2em; display: inline-block; text-align: center; }
+        #ram .row .cell.changed { background: #483d8b; color: white; border-radius: 3px; }
+        #ram .title { border-radius: .5em .5em 0 0; background: cornflowerblue; color: white; flex-basis: 100%; padding: .3em; text-align: center; }
+        #virtual-terminal { border-radius: .5em; border: 1px solid grey; width: 100%; margin-top: 20px; }
+        #terminal-content { height: 150px; overflow-y: scroll; background: #222; color: #0f0; padding: 10px; font-family: monospace; }
+        #lang-selector { width: 100%; text-align: right; padding: 10px; font-size: 1.5em; }
+        #lang-selector span { cursor: pointer; margin-left: 10px; transition: transform 0.2s; display: inline-block; }
+        #lang-selector span:hover { transform: scale(1.2); }
     </style>
 </head>
 
-
 <body onload="initReg()">
+    <div id="lang-selector">
+        <span onclick="setLanguage('en')" title="English">🇺🇸</span>
+        <span onclick="setLanguage('de')" title="Deutsch">🇩🇪</span>
+        <span onclick="setLanguage('cn')" title="中文">🇨🇳</span>
+    </div>
+
     <span>
         <span id='ram'>
-            <span class="title">RAM</span>
+            <span class="title" id="ram-title">RAM</span>
         </span>
 
-        <span style="flex-basis: 100%">
-            <span id="reg-a" class="reg">
-                <span class="title">
-                    <span class="name">A</span>
-                    <span class="type">HEX</span>
-                </span>
-                <span class="value">00</span>
-            </span>
-            <span id="reg-b" class="reg">
-                <span class="title">
-                    <span class="name">B</span>
-                    <span class="type">HEX</span>
-                </span>
-                <span class="value">00</span>
-            </span>
-            <span id="reg-sp" class="reg">
-                <span class="title">
-                    <span class="name">SP</span>
-                    <span class="type">HEX</span>
-                </span>
-                <span class="value">00</span>
-            </span>
-            <span id="reg-psw" class="reg">
-                <span class="title">
-                    <span class="name">PSW</span>
-                    <span class="type">HEX</span>
-                </span>
-                <span class="value">00</span>
-            </span>
-            <span id="reg-dptr" class="reg reg16">
-                <span class="title">
-                    <span class="name">DPTR</span>
-                    <span class="type">HEX</span>
-                </span>
-                <span class="value">00 00</span>
-            </span>
-            <span id="reg-pc" class="reg reg16">
-                <span class="title">
-                    <span class="name">PC</span>
-                    <span class="type">HEX</span>
-                </span>
-                <span class="value">00 00</span>
-            </span>
+        <div style="margin-top: 20px;">
+            <span id="reg-a" class="reg"><span class="title"><span class="name">A</span><span class="type">HEX</span></span><span class="value">00</span></span>
+            <span id="reg-b" class="reg"><span class="title"><span class="name">B</span><span class="type">HEX</span></span><span class="value">00</span></span>
+            <span id="reg-sp" class="reg"><span class="title"><span class="name">SP</span><span class="type">HEX</span></span><span class="value">00</span></span>
+            <span id="reg-psw" class="reg"><span class="title"><span class="name">PSW</span><span class="type">HEX</span></span><span class="value">00</span></span>
+            <span id="reg-dptr" class="reg reg16"><span class="title"><span class="name">DPTR</span><span class="type">HEX</span></span><span class="value">0000</span></span>
+            <span id="reg-pc" class="reg reg16"><span class="title"><span class="name">PC</span><span class="type">HEX</span></span><span class="value">0000</span></span>
+            <br>
+            <span id="reg-p0" class="reg"><span class="title"><span class="name">P0</span><span class="type">HEX</span></span><span class="value">FF</span></span>
+            <span id="reg-p1" class="reg"><span class="title"><span class="name">P1</span><span class="type">HEX</span></span><span class="value">FF</span></span>
+            <span id="reg-p2" class="reg"><span class="title"><span class="name">P2</span><span class="type">HEX</span></span><span class="value">FF</span></span>
+            <span id="reg-p3" class="reg"><span class="title"><span class="name">P3</span><span class="type">HEX</span></span><span class="value">FF</span></span>
+        </div>
 
-
-            <span id="reg-p0" class="reg">
-                <span class="title">
-                    <span class="name">P0</span>
-                    <span class="type">HEX</span>
-                </span>
-                <span class="value">00 00</span>
-            </span>
-            <span id="reg-p1" class="reg">
-                <span class="title">
-                    <span class="name">P1</span>
-                    <span class="type">HEX</span>
-                </span>
-                <span class="value">00 00</span>
-            </span>
-            <span id="reg-p2" class="reg">
-                <span class="title">
-                    <span class="name">P2</span>
-                    <span class="type">HEX</span>
-                </span>
-                <span class="value">00 00</span>
-            </span>
-            <span id="reg-p3" class="reg">
-                <span class="title">
-                    <span class="name">P3</span>
-                    <span class="type">HEX</span>
-                </span>
-                <span class="value">00 00</span>
-            </span>
-            <input type="file" value="../keil_51vm/51vm.bin" accept=".bin,.hex" onchange="readfile.call(this)" />
-            <button type="button" id="btn-start" onclick="start_or_pause()">开始</button>
-            <button type="button" id="btn-reset" onclick="reset()">重置</button>
-            <button type="button" id="btn-reset" onclick="set_ext_interrupt(0)">int0</button>
-            <button type="button" id="btn-reset" onclick="set_ext_interrupt(1)">int1</button>
-        </span>
-        <span id="error-info"></span>
+        <div style="margin-top: 20px;">
+            <input type="file" accept=".bin,.hex" onchange="readfile.call(this)" />
+            <button type="button" id="btn-start" onclick="start_or_pause()">Start</button>
+            <button type="button" id="btn-reset" onclick="reset()">Reset</button>
+            <button type="button" id="btn-int0" onclick="set_ext_interrupt(0)">Int 0</button>
+            <button type="button" id="btn-int1" onclick="set_ext_interrupt(1)">Int 1</button>
+        </div>
+        <div id="error-info" style="color: red; font-weight: bold; margin-top: 10px;"></div>
     </span>
 
     <div id="virtual-terminal">
-        <div>
-            <button type="button" id="btn-clear-terminal" onclick="clear_terminal()">清空</button><span>虚拟终端:</span>
+        <div style="padding: 5px; background: #ddd; border-bottom: 1px solid #ccc;">
+            <button type="button" id="btn-clear-terminal" onclick="clear_terminal()">Clear</button>
+            <span id="terminal-label" style="font-weight: bold; margin-left: 10px;">Virtual Terminal:</span>
         </div>
         <div id='terminal-content'></div>
     </div>
-
 </body>
-
 </html>
